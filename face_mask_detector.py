@@ -44,12 +44,24 @@ class FaceMaskDetector:
         # Load OpenCV Frontal Face Cascade safely with fallback
         self.face_cascade = None
         try:
-            if hasattr(cv2, 'CascadeClassifier') and hasattr(cv2, 'data') and hasattr(cv2.data, 'haarcascades'):
+            local_cascade = os.path.join(os.path.dirname(__file__), "models", "haarcascade_frontalface_default.xml")
+            if os.path.exists(local_cascade):
+                cascade_path = local_cascade
+            elif hasattr(cv2, 'data') and hasattr(cv2.data, 'haarcascades'):
                 cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+            else:
+                cascade_path = None
+
+            if cascade_path and hasattr(cv2, 'CascadeClassifier'):
                 self.face_cascade = cv2.CascadeClassifier(cascade_path)
-                print("[FaceMaskDetector] CascadeClassifier initialized successfully.")
+                if self.face_cascade.empty():
+                    print(f"[FaceMaskDetector] Warning: Cascade file empty at {cascade_path}, using person-crop fallback.")
+                    self.face_cascade = None
+                else:
+                    print(f"[FaceMaskDetector] CascadeClassifier initialized successfully from {cascade_path}.")
         except Exception as e:
             print(f"[FaceMaskDetector] Warning: Could not load CascadeClassifier ({e}), using person-crop fallback.")
+
 
 
         # Image transform for PyTorch classifier
