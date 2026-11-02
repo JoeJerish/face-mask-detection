@@ -3,9 +3,16 @@ import base64
 import cv2
 import numpy as np
 
-# Headless safety patch for cv2.imshow when running on cloud servers without GUI
+# Headless safety patch for cv2 when running on cloud servers without GUI
 if not hasattr(cv2, 'imshow'):
     cv2.imshow = lambda *args, **kwargs: None
+if not hasattr(cv2, 'IMREAD_COLOR'):
+    cv2.IMREAD_COLOR = 1
+if not hasattr(cv2, 'IMREAD_GRAYSCALE'):
+    cv2.IMREAD_GRAYSCALE = 0
+if not hasattr(cv2, 'IMREAD_UNCHANGED'):
+    cv2.IMREAD_UNCHANGED = -1
+
 
 from flask import Flask, render_template, request, jsonify
 
