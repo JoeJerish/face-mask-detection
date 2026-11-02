@@ -1,5 +1,10 @@
 import cv2
 import numpy as np
+
+# Headless safety patch for cv2.imshow when running on cloud servers without GUI
+if not hasattr(cv2, 'imshow'):
+    cv2.imshow = lambda *args, **kwargs: None
+
 import torch
 from ultralytics import YOLO
 

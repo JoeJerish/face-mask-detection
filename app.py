@@ -3,6 +3,10 @@ import base64
 import cv2
 import numpy as np
 
+# Headless safety patch for cv2.imshow when running on cloud servers without GUI
+if not hasattr(cv2, 'imshow'):
+    cv2.imshow = lambda *args, **kwargs: None
+
 from flask import Flask, render_template, request, jsonify
 
 from object_detector import ObjectDetector
