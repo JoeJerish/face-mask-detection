@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vision Assist AI</title>
+  <style>
+    :root { color-scheme: dark; --bg:#0f172a; --panel:#1e293b; --line:#334155; --muted:#94a3b8; --blue:#38bdf8; --yellow:#facc15; --green:#22c55e; --red:#ef4444; }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { font-family:Arial,Helvetica,sans-serif; background:var(--bg); color:#f8fafc; min-height:100vh; }
+    header { text-align:center; padding:22px 16px; background:#111827; border-bottom:1px solid var(--line); }
+    header h1 { font-size:clamp(24px,4vw,34px); margin-bottom:7px; }
+    header p { color:var(--muted); }
+    main { width:min(1200px,95%); margin:24px auto; }
+    .panel { background:var(--panel); border:1px solid rgba(148,163,184,.12); border-radius:16px; padding:20px; box-shadow:0 10px 30px rgba(0,0,0,.18); }
+    .video-wrap { position:relative; width:100%; max-width:1000px; margin:auto; background:#020617; border-radius:12px; overflow:hidden; min-height:180px; }
+    video { display:block; width:100%; height:auto; min-height:180px; object-fit:contain; background:#020617; }
+    canvas { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+    #maskOverlay { position:absolute; z-index:2; top:12px; left:12px; padding:9px 13px; border-radius:8px; background:rgba(0,0,0,.78); color:#fff; font-weight:700; font-size:clamp(14px,2vw,19px); pointer-events:none; }
+    .status { text-align:center; margin:14px 0 4px; font-size:17px; color:var(--red); }
+    .status.online { color:var(--green); }
+    .buttons { display:flex; justify-content:center; flex-wrap:wrap; gap:12px; margin-top:18px; }
+    button { border:0; border-radius:9px; padding:13px 24px; font-size:16px; font-weight:700; cursor:pointer; }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+    #startBtn { background:var(--green); color:#052e16; }
+    #stopBtn { background:var(--red); color:#fff; }
+    #testBtn { background:#334155; color:#fff; }
+    #message { display:none; margin-top:14px; padding:12px 14px; border-radius:8px; line-height:1.5; overflow-wrap:anywhere; }
+    #message.info { display:block; background:#1e3a8a; color:#dbeafe; }
+    #message.error { display:block; background:#7f1d1d; color:#fee2e2; }
+    #message.success { display:block; background:#14532d; color:#dcfce7; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:14px; margin-top:18px; }
+    .stat { text-align:center; padding:20px 14px; border-radius:12px; background:var(--panel); }
+    .stat h2 { font-size:13px; letter-spacing:.04em; color:var(--muted); margin-bottom:10px; }
+    .value { font-size:clamp(24px,3vw,32px); font-weight:800; overflow-wrap:anywhere; }
+    #personCount { color:var(--blue); } #maskStatus { color:var(--green); } #fps { color:var(--yellow); } #serverStatus { color:var(--red); }
+    .instructions { margin-top:20px; line-height:1.7; color:#cbd5e1; }
+    .instructions h2 { color:#fff; margin-bottom:8px; }
+    .instructions ul { margin-left:22px; }
+    .small { color:var(--muted); font-size:13px; margin-top:12px; line-height:1.5; }
+    @media(max-width:600px) { main { width:94%; margin:14px auto; } .panel { padding:10px; } .buttons button { flex:1 1 100%; } .video-wrap, video { min-height:220px; } }
+  </style>
+</head>
+<body>
+<header>
+  <h1>VISION ASSIST AI</h1>
+  <p>Real-Time Object, Person and Face-Mask Detection</p>
+</header>
+
+<main>
+  <section class="panel" aria-label="Camera and detection">
+    <div class="video-wrap">
+      <video id="video" autoplay playsinline muted></video>
+      <canvas id="canvas"></canvas>
+      <div id="maskOverlay">MASK: ---</div>
+    </div>
+    <div id="status" class="status">Camera is stopped</div>
+    <div class="buttons">
+      <button id="startBtn" type="button">Start Camera</button>
+      <button id="stopBtn" type="button" disabled>Stop Camera</button>
+      <button id="testBtn" type="button">Test AI Server</button>
+    </div>
+    <div id="message" role="status" aria-live="polite"></div>
+    <p class="small">The camera runs in this browser. Keep the Flask server running in Command Prompt while using AI detection.</p>
+  </section>
+
+  <section class="grid" aria-label="Detection summary">
+    <div class="stat"><h2>PERSONS DETECTED</h2><div id="personCount" class="value">0</div></div>
+    <div class="stat"><h2>OBJECTS DETECTED</h2><div id="objectCount" class="value">0</div></div>
+    <div class="stat"><h2>MASK STATUS</h2><div id="maskStatus" class="value">---</div></div>
+    <div class="stat"><h2>FPS</h2><div id="fps" class="value">0</div></div>
+    <div class="stat"><h2>AI SERVER</h2><div id="serverStatus" class="value">UNKNOWN</div></div>
+  </section>
+
+  <section class="panel instructions">
+    <h2>How to use</h2>
+    <ul>
+      <li>Click <b>Start Camera</b> and allow Chrome to use your webcam.</li>
+      <li>Keep your face or object clearly visible, in good lighting.</li>
+      <li>Person boxes are blue; other object boxes are yellow; mask boxes are green or red.</li>
+      <li>If the camera does not start, read the error message displayed here.</li>
+    </ul>
+    <p class="small">Note: YOLO detects only classes it was trained on. Face-mask results require a properly trained mask model file in the backend.</p>
+  </section>
+</main>
+
+<script>
+(() => {
+  "use strict";
+
+  const video = document.getElementById("video");
+  const canvas = document.getElementById("canvas");
+  const ctx = canvas.getContext("2d");
+  const startBtn = document.getElementById("startBtn");
+  const stopBtn = document.getElementById("stopBtn");
+  const testBtn = document.getElementById("testBtn");
+  const statusText = document.getElementById("status");
+  const message = document.getElementById("message");
+  const personCount = document.getElementById("personCount");
+  const objectCount = document.getElementById("objectCount");
+  const maskStatus = document.getElementById("maskStatus");
+  const fpsDisplay = document.getElementById("fps");
+  const serverStatus = document.getElementById("serverStatus");
+  const maskOverlay = document.getElementById("maskOverlay");
+
+  let stream = null;
+  let running = false;
+  let requestBusy = false;
+  let animationId = null;
+  let lastRequestAt = 0;
+  let frameCount = 0;
+  let fpsWindowAt = performance.now();
+  let latest = { detections: [], person_boxes: [], mask_results: [] };
+  const DETECTION_DELAY_MS = 350;
+  const CONFIDENCE = 0.20;
+
+  function showMessage(text, type = "info") {
+    message.textContent = text;
+    message.className = type;
+    message.style.display = "block";
+  }
+  function hideMessage() {
+    message.textContent = "";
+    message.className = "";
+    message.style.display = "none";
+  }
+  function setServerStatus(text, ok = false) {
+    serverStatus.textContent = text;
+    serverStatus.style.color = ok ? "var(--green)" : "var(--red)";
+  }
+  function setCameraStatus(text, online = false) {
+    statusText.textContent = text;
+    statusText.className = online ? "status online" : "status";
+  }
+  function clearCanvas() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+
+  async function startCamera() {
+    if (running) return;
+    hideMessage();
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showMessage("This browser does not support camera access here. Open this page using http://127.0.0.1:5000 or localhost in Chrome.", "error");
+      return;
+    }
+
+    startBtn.disabled = true;
+    setCameraStatus("Requesting camera permission…");
+    try {
+      // Prefer the selected/default webcam, with a fallback for devices that reject ideal constraints.
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: false
+        });
+      } catch (firstError) {
+        if (firstError.name === "OverconstrainedError" || firstError.name === "NotFoundError") throw firstError;
+        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      }
+
+      video.srcObject = stream;
+      await new Promise((resolve, reject) => {
+        if (video.readyState >= 2) { resolve(); return; }
+        video.onloadedmetadata = () => resolve();
+        video.onerror = () => reject(new Error("The browser could not load the camera video."));
+      });
+      await video.play();
+
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+      running = true;
+      requestBusy = false;
+      lastRequestAt = 0;
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+      setCameraStatus("Camera running", true);
+      showMessage("Camera started. Checking the AI server…", "info");
+      await testServer(false);
+      loop();
+    } catch (error) {
+      console.error("Camera start error:", error);
+      if (stream) stream.getTracks().forEach(track => track.stop());
+      stream = null;
+      video.srcObject = null;
+      running = false;
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      setCameraStatus("Camera is stopped");
+      const details = error && error.name ? `${error.name}: ${error.message || "No additional details"}` : String(error);
+      showMessage(`Unable to start the camera. ${details}. Check Chrome camera permission and close apps that may be using the webcam.`, "error");
+    }
+  }
+
+  function stopCamera() {
+    running = false;
+    if (animationId !== null) cancelAnimationFrame(animationId);
+    animationId = null;
+    if (stream) stream.getTracks().forEach(track => track.stop());
+    stream = null;
+    video.pause();
+    video.srcObject = null;
+    requestBusy = false;
+    latest = { detections: [], person_boxes: [], mask_results: [] };
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+    setCameraStatus("Camera is stopped");
+    personCount.textContent = "0";
+    objectCount.textContent = "0";
+    maskStatus.textContent = "---";
+    fpsDisplay.textContent = "0";
+    maskOverlay.textContent = "MASK: ---";
+    maskOverlay.style.color = "#fff";
+    clearCanvas();
+  }
+
+  async function testServer(showResult = true) {
+    try {
+      // POSTing a tiny invalid-free image is not needed: test the Flask endpoint's availability
+      // with a lightweight GET; if GET is not supported, the detection request will report it.
+      const response = await fetch("/api/detect", {
+        method: "GET",
+        headers: { "ngrok-skip-browser-warning": "true" },
+        cache: "no-store"
+      });
+      if (response.ok || response.status === 405) {
+        setServerStatus("READY", true);
+        if (showResult) showMessage("Flask server is reachable. Click Start Camera to begin detection.", "success");
+        return true;
+      }
+      setServerStatus("ERROR");
+      if (showResult) showMessage(`AI endpoint responded with HTTP ${response.status}. Check app.py and restart the Flask server.`, "error");
+      return false;
+    } catch (error) {
+      console.error("AI server test error:", error);
+      setServerStatus("OFFLINE");
+      if (showResult) showMessage("Cannot reach the AI server. Keep the Command Prompt running and start it with: py app.py", "error");
+      return false;
+    }
+  }
+
+  async function detectFrame() {
+    if (!running || requestBusy || !video.videoWidth || !video.videoHeight) return;
+    requestBusy = true;
+    try {
+      // Use a separate temporary canvas so drawing boxes never contaminates the image sent to the model.
+      const frameCanvas = document.createElement("canvas");
+      frameCanvas.width = video.videoWidth;
+      frameCanvas.height = video.videoHeight;
+      frameCanvas.getContext("2d").drawImage(video, 0, 0, frameCanvas.width, frameCanvas.height);
+      const image = frameCanvas.toDataURL("image/jpeg", 0.78);
+      const response = await fetch("/api/detect", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "ngrok-skip-browser-warning": "true"
+        },
+        body: JSON.stringify({ image, conf: CONFIDENCE })
+      });
+      if (!response.ok) throw new Error(`AI server returned HTTP ${response.status}`);
+      const data = await response.json();
+      latest = {
+        detections: Array.isArray(data.detections) ? data.detections : [],
+        person_boxes: Array.isArray(data.person_boxes) ? data.person_boxes : [],
+        mask_results: Array.isArray(data.mask_results) ? data.mask_results : []
+      };
+      updateDashboard(data);
+      setServerStatus("ONLINE", true);
+    } catch (error) {
+      console.error("Detection request error:", error);
+      setServerStatus("ERROR");
+      showMessage(`Camera is on, but AI detection failed: ${error.message}. Check the Flask Command Prompt for the backend error.`, "error");
+    } finally {
+      requestBusy = false;
+    }
+  }
+
+  function updateDashboard(data) {
+    const persons = Array.isArray(data.person_boxes) ? data.person_boxes.length : 0;
+    const detections = Array.isArray(data.detections) ? data.detections : [];
+    const masks = Array.isArray(data.mask_results) ? data.mask_results : [];
+    personCount.textContent = String(persons);
+    objectCount.textContent = String(detections.length);
+
+    if (!masks.length) {
+      maskStatus.textContent = "NO FACE";
+      maskStatus.style.color = "var(--muted)";
+      maskOverlay.textContent = "MASK: NO FACE";
+      maskOverlay.style.color = "#cbd5e1";
+    } else {
+      const hasOff = masks.some(item => item && item.status && item.status !== "MASK ON");
+      const text = hasOff ? "MASK OFF" : "MASK ON";
+      maskStatus.textContent = text;
+      maskStatus.style.color = hasOff ? "var(--red)" : "var(--green)";
+      maskOverlay.textContent = `MASK: ${hasOff ? "OFF" : "ON"}`;
+      maskOverlay.style.color = hasOff ? "#ef4444" : "#22c55e";
+    }
+
+    frameCount++;
+    const now = performance.now();
+    if (now - fpsWindowAt >= 1000) {
+      fpsDisplay.textContent = String(frameCount);
+      frameCount = 0;
+      fpsWindowAt = now;
+    }
+  }
+
+  function coordsFrom(item) {
+    if (Array.isArray(item) && item.length >= 4) {
+      return { x1: Number(item[0]), y1: Number(item[1]), x2: Number(item[2]), y2: Number(item[3]) };
+    }
+    if (item && typeof item === "object") {
+      const b = Array.isArray(item.box) ? item.box : null;
+      return b ? { x1:Number(b[0]), y1:Number(b[1]), x2:Number(b[2]), y2:Number(b[3]) } :
+        { x1:Number(item.x1), y1:Number(item.y1), x2:Number(item.x2), y2:Number(item.y2) };
+    }
+    return null;
+  }
+
+  function drawBox(item, color, label, lineWidth = 3) {
+    const p = coordsFrom(item);
+    if (!p || ![p.x1,p.y1,p.x2,p.y2].every(Number.isFinite)) return;
+    const x = p.x1, y = p.y1, w = p.x2 - p.x1, h = p.y2 - p.y1;
+    if (w <= 0 || h <= 0) return;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineWidth;
+    ctx.strokeRect(x, y, w, h);
+    ctx.font = "bold 16px Arial";
+    const pad = 5;
+    const labelWidth = Math.min(ctx.measureText(label).width + pad * 2, Math.max(40, canvas.width - x));
+    const labelY = Math.max(0, y - 25);
+    ctx.fillStyle = color;
+    ctx.fillRect(Math.max(0, x), labelY, labelWidth, 23);
+    ctx.fillStyle = "#0b1220";
+    ctx.fillText(label, Math.max(3, x + pad), labelY + 16, Math.max(30, labelWidth - pad));
+  }
+
+  function drawDetections() {
+    if (!running) return;
+    // Keep overlay coordinates in the source video's pixel space.
+    if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+    }
+    clearCanvas();
+    latest.person_boxes.forEach(box => drawBox(box, "#38bdf8", "PERSON"));
+    latest.detections.forEach(d => {
+      const label = d && (d.class_name || d.label || d.class) ? (d.class_name || d.label || d.class) : "OBJECT";
+      if (String(label).toLowerCase() === "person") return; // Person boxes are drawn in blue above.
+      let confidence = d && (d.confidence ?? d.conf);
+      let suffix = "";
+      if (confidence !== undefined && confidence !== null && confidence !== "") {
+        let value = Number(confidence);
+        if (Number.isFinite(value)) { if (value <= 1) value *= 100; suffix = ` ${Math.round(value)}%`; }
+      }
+      drawBox(d, "#facc15", `${label}${suffix}`, 2);
+    });
+    latest.mask_results.forEach(item => {
+      const label = item && item.status ? item.status : "MASK";
+      const color = label === "MASK ON" ? "#22c55e" : label === "MASK OFF" ? "#ef4444" : "#94a3b8";
+      drawBox(item, color, label, 4);
+    });
+  }
+
+  function loop() {
+    if (!running) return;
+    drawDetections();
+    const now = performance.now();
+    if (now - lastRequestAt >= DETECTION_DELAY_MS && !requestBusy) {
+      lastRequestAt = now;
+      detectFrame();
+    }
+    animationId = requestAnimationFrame(loop);
+  }
+
+  startBtn.addEventListener("click", () => {
+    console.log("Start Camera button clicked");
+    startCamera();
+  });
+  stopBtn.addEventListener("click", stopCamera);
+  testBtn.addEventListener("click", () => testServer(true));
+  window.addEventListener("beforeunload", stopCamera);
+
+  // Make script failures easier to diagnose rather than leaving a silent, dead button.
+  window.addEventListener("error", event => {
+    console.error("Page JavaScript error:", event.message, event.filename, event.lineno);
+    showMessage(`JavaScript error: ${event.message}`, "error");
+  });
+  window.addEventListener("unhandledrejection", event => {
+    const reason = event.reason;
+    console.error("Unhandled page error:", reason);
+    showMessage(`Unexpected error: ${reason && reason.message ? reason.message : String(reason)}`, "error");
+  });
+})();
+</script>
+</body>
+</html>
